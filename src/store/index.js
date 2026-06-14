@@ -7,6 +7,7 @@ export const store = reactive({
   anonymousPosts: [],
   processing: false,
   error: null,
+  parseError: null,
 
   setConversations(convs) {
     this.conversations = convs
@@ -32,10 +33,16 @@ export const store = reactive({
     this.error = err
   },
 
+  setParseError(err) {
+    this.parseError = err
+    this.error = err ? err.message : null
+  },
+
   clearAll() {
     this.conversations = []
     this.selectedConversation = null
     this.loveLetters = []
     this.error = null
+    this.parseError = null
   }
 })

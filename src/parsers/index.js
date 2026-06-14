@@ -3,20 +3,62 @@ import { parseIPhoneBackup } from './iphoneParser'
 import { parseCSV } from './csvParser'
 import { generateDemoData } from './demoData'
 
+export class ParseError extends Error {
+  constructor(message, options = {}) {
+    super(message)
+    this.name = 'ParseError'
+    this.fileType = options.fileType || 'unknown'
+    this.fileName = options.fileName || ''
+    this.fileSize = options.fileSize || 0
+    this.errorCode = options.errorCode || 'parse_failed'
+    this.rawError = options.rawError || null
+  }
+}
+
+export function detectFileType(fileName) {
+  const lower = fileName.toLowerCase()
+  if (lower.endsWith('.xml')) return 'android-xml'
+  if (lower.endsWith('.db') || lower.endsWith('.sqlite')) return 'iphone-db'
+  if (lower.endsWith('.csv')) return 'csv'
+  if (lower.endsWith('.txt')) return 'txt'
+  if (lower.endsWith('.json')) return 'json'
+  return 'unknown'
+}
+
 export async function parseSmsFile(file) {
-  const fileName = file.name.toLowerCase()
-  
-  if (fileName.endsWith('.xml')) {
-    return parseAndroidXML(file)
-  } else if (fileName.endsWith('.db') || fileName.endsWith('.sqlite') || fileName.includes('iphone')) {
-    return parseIPhoneBackup(file)
-  } else if (fileName.endsWith('.csv') || fileName.endsWith('.txt')) {
-    return parseCSV(file)
-  } else if (fileName.endsWith('.json')) {
-    return parseJSON(file)
+  const fileName = file.name
+  const fileType = detectFileType(fileName)
+  const errorOptions = {
+    fileType,
+    fileName: file.name,
+    fileSize: file.size
   }
   
-  throw new Error('不支持的文件格式，请上传 .xml, .csv, .txt, .db 或 .json 文件')
+  try {
+    if (fileType === 'android-xml') {
+      return await parseAndroidXML(file)
+    } else if (fileType === 'iphone-db') {
+      return await parseIPhoneBackup(file)
+    } else if (fileType === 'csv' || fileType === 'txt') {
+      return await parseCSV(file)
+    } else if (fileType === 'json') {
+      return await parseJSON(file)
+    }
+    
+    throw new ParseError('不支持的文件格式，请上传 .xml, .csv, .txt, .db 或 .json 文件', {
+      ...errorOptions,
+      errorCode: 'unsupported_format'
+    })
+  } catch (e) {
+    if (e instanceof ParseError) {
+      throw e
+    }
+    throw new ParseError(e.message, {
+      ...errorOptions,
+      errorCode: 'parse_failed',
+      rawError: e
+    })
+  }
 }
 
 export async function parseJSON(file) {

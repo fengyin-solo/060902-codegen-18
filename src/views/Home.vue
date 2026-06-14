@@ -10,7 +10,7 @@
       </div>
     </section>
 
-    <section class="upload-section" v-if="!store.processing && store.loveLetters.length === 0">
+    <section class="upload-section" v-if="!store.processing && store.loveLetters.length === 0 && !store.parseError">
       <div class="card">
         <h3>📤 上传短信备份</h3>
         <p class="tip">支持安卓 XML 导出、iPhone 备份、CSV/文本格式</p>
@@ -40,13 +40,56 @@
           <button class="btn btn-secondary" @click="loadDemo">🎭 加载演示数据</button>
         </div>
 
-        <div class="format-info">
-          <h4>💡 支持的格式</h4>
-          <ul>
-            <li><strong>安卓：</strong>SMS Backup & Restore 导出的 XML 文件</li>
-            <li><strong>iPhone：</strong>iTunes 备份中的 sms.db 或导出的文本/CSV</li>
-            <li><strong>通用：</strong>CSV（需包含号码、内容、时间、类型列）</li>
-          </ul>
+        <div class="format-info" :class="{ expanded: showFormatInfo }">
+          <h4 @click="showFormatInfo = !showFormatInfo" class="format-header">
+            💡 支持的格式
+            <span class="toggle-icon">{{ showFormatInfo ? '▲' : '▼' }}</span>
+          </h4>
+          <div v-show="showFormatInfo" class="format-content">
+            <ul>
+              <li><strong>安卓：</strong>SMS Backup & Restore 导出的 XML 文件</li>
+              <li><strong>iPhone：</strong>iTunes 备份中的 sms.db 或导出的文本/CSV</li>
+              <li><strong>通用：</strong>CSV（需包含号码、内容、时间、类型列）</li>
+            </ul>
+
+            <div class="format-detail">
+              <h5>📱 安卓 XML 格式</h5>
+              <pre class="code-block">&lt;?xml version='1.0' encoding='UTF-8' standalone='yes' ?&gt;
+&lt;smses count="2"&gt;
+  &lt;sms address="13800138000" body="今晚一起吃饭吗？" 
+       date="1672531200000" type="1" read="1" /&gt;
+  &lt;sms address="13800138000" body="好的，几点？" 
+       date="1672531260000" type="2" read="1" /&gt;
+&lt;/smses&gt;</pre>
+            </div>
+
+            <div class="format-detail">
+              <h5>📊 CSV 格式</h5>
+              <pre class="code-block">address,body,date,type
+13800138000,今晚一起吃饭吗？,1672531200000,1
+13800138000,好的，几点？,1672531260000,2</pre>
+            </div>
+
+            <div class="format-detail">
+              <h5>📝 文本格式</h5>
+              <pre class="code-block">2024-01-01 12:00 13800138000 接收: 今晚一起吃饭吗？
+2024-01-01 12:01 13800138000 发送: 好的，几点？</pre>
+            </div>
+
+            <div class="format-detail">
+              <h5>📋 JSON 格式</h5>
+              <pre class="code-block">{
+  "messages": [
+    {
+      "address": "13800138000",
+      "body": "今晚一起吃饭吗？",
+      "date": 1672531200000,
+      "type": 1
+    }
+  ]
+}</pre>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -56,13 +99,12 @@
       <p>正在分析您的短信，寻找最动人的对话...</p>
     </section>
 
-    <section v-if="store.error" class="error">
-      <div class="card error-card">
-        <div class="icon">😢</div>
-        <h3>出了点小问题</h3>
-        <p>{{ store.error }}</p>
-        <button class="btn btn-secondary" @click="store.error = null">重新尝试</button>
-      </div>
+    <section v-if="store.parseError" class="repair-section">
+      <ImportRepairWizard
+        :parse-error="store.parseError"
+        @reselect="handleReselectFile"
+        @show-formats="showFormatInfo = true"
+      />
     </section>
 
     <section v-if="store.loveLetters.length > 0 && !store.processing" class="results">
@@ -126,12 +168,14 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { store } from '@/store'
-import { parseSmsFile, generateDemoData } from '@/parsers'
+import { parseSmsFile, generateDemoData, ParseError } from '@/parsers'
 import { findLoveLetters } from '@/detectors'
+import ImportRepairWizard from '@/components/ImportRepairWizard.vue'
 
 const router = useRouter()
 const fileInput = ref(null)
 const isDragging = ref(false)
+const showFormatInfo = ref(false)
 
 function triggerFileInput() {
   fileInput.value.click()
@@ -152,9 +196,19 @@ async function handleDrop(e) {
   }
 }
 
+function handleReselectFile() {
+  store.parseError = null
+  store.error = null
+  if (fileInput.value) {
+    fileInput.value.value = ''
+  }
+  triggerFileInput()
+}
+
 async function processFile(file) {
   store.processing = true
   store.error = null
+  store.parseError = null
   
   try {
     const conversations = await parseSmsFile(file)
@@ -168,7 +222,11 @@ async function processFile(file) {
     }
   } catch (e) {
     console.error(e)
-    store.error = e.message
+    if (e instanceof ParseError) {
+      store.setParseError(e)
+    } else {
+      store.error = e.message
+    }
   } finally {
     store.processing = false
   }
@@ -177,6 +235,7 @@ async function processFile(file) {
 async function loadDemo() {
   store.processing = true
   store.error = null
+  store.parseError = null
   
   try {
     await new Promise(resolve => setTimeout(resolve, 800))
@@ -282,9 +341,22 @@ function getTagClass(tag) {
   border-top: 1px solid var(--border);
 }
 
-.format-info h4 {
+.format-header {
+  cursor: pointer;
   margin-bottom: 1rem;
   color: var(--text-dark);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.format-header:hover {
+  color: var(--love-red);
+}
+
+.toggle-icon {
+  font-size: 0.8rem;
+  color: var(--text-light);
 }
 
 .format-info ul {
@@ -296,9 +368,42 @@ function getTagClass(tag) {
   color: var(--text-light);
 }
 
+.format-content {
+  padding-top: 0.5rem;
+}
+
+.format-detail {
+  margin-top: 1.5rem 0;
+  padding: 1rem;
+  background: var(--bg-light);
+  border-radius: 8px;
+}
+
+.format-detail h5 {
+  color: var(--text-dark);
+  margin-bottom: 0.75rem;
+  font-size: 0.95rem;
+}
+
+.format-detail .code-block {
+  background: #2d3748;
+  color: #e2e8f0;
+  padding: 1rem;
+  border-radius: 6px;
+  font-family: 'Monaco', 'Menlo', monospace;
+  font-size: 0.8rem;
+  overflow-x: auto;
+  margin: 0;
+  line-height: 1.6;
+}
+
 .processing {
   text-align: center;
   padding: 4rem 2rem;
+}
+
+.repair-section {
+  padding: 2rem 0;
 }
 
 .processing .loading {
